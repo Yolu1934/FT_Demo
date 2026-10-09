@@ -15,7 +15,6 @@ def main():
         os.makedirs(hparams.saving_path)
 
     for exp in range(hparams.num_exps):
-        exp+=3
         for ifold, foldlabel in enumerate(sorted(os.listdir(hparams.labeldir))):
             hparams.labelpath = os.path.join(hparams.labeldir, foldlabel)
             model = DownstreamGeneral(hparams,exp)

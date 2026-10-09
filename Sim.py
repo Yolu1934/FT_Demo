@@ -4,7 +4,7 @@ from open_code import *
 class Config(Config):
     a_max=0.3
     topk = 2
-    num_exps = 1
+    num_exps = 3
     margin=0.4
     log_dir = "plus"
     outputfile='plus.txt'
@@ -105,7 +105,7 @@ def main():
     with open(hparams.outputfile, 'a') as f:
         f.write(outputstr)
     for exp in range(hparams.num_exps):
-        exp+=3
+
         for ifold, foldlabel in enumerate(sorted(os.listdir(hparams.labeldir))):
             hparams.labelpath = os.path.join(hparams.labeldir, foldlabel)
             model = DownstreamGeneral(hparams,exp=exp)

@@ -5,7 +5,7 @@ class Config(Config):
     topk = 2
     a_max = 0.3
     margin = 0.4
-    num_exps = 1
+    num_exps = 3
     confusion_gamma = 0.3
     outputfile = 'class_w.txt'
     log_dir = "class_w"

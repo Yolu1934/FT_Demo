@@ -3,7 +3,7 @@ class Config(Config):
     topk = 2
     a_max = 0.3
     margin = 0.4
-    num_exps = 1
+    num_exps = 3
     outputfile = 'A2.txt'
     log_dir = "A2"
 
@@ -124,8 +124,6 @@ def main_compact_topk():
     for exp in range(hparams.num_exps):
 
         for ifold, foldlabel in enumerate(sorted(os.listdir(hparams.labeldir))):
-            if ifold!=3:continue
-
             hparams.labelpath = os.path.join(hparams.labeldir, foldlabel)
             model = DownstreamGeneral_CompactTopK(hparams, exp=exp)
             base_checkpoint = ModelCheckpoint(

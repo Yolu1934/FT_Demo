@@ -3,7 +3,7 @@ class Config(Config):
     topk = 2
     a_max = 0.3
     margin = 0.4
-    num_exps = 1
+    num_exps = 3
     outputfile = 'A1.txt'
     log_dir = "A1"
 
@@ -103,7 +103,6 @@ def main_compact_only():
         f.write(outputstr)
 
     for exp in range(hparams.num_exps):
-        exp+=1
         for ifold, foldlabel in enumerate(sorted(os.listdir(hparams.labeldir))):
             if ifold in [0,1,2]:
                 continue

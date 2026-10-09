@@ -5,7 +5,7 @@ class Config(Config):
     a_max=0.3
     margin=0.4
     topk=2
-    num_exps = 1
+    num_exps = 3
     log_dir = "triplet"
     outputfile="triplet.txt"
 hparams = Config()
@@ -126,7 +126,7 @@ def main():
     with open(hparams.outputfile, 'a') as f:
         f.write(outputstr)
     for exp in range(hparams.num_exps):
-        exp+=2
+
         for ifold, foldlabel in enumerate(sorted(os.listdir(hparams.labeldir))):
             if ifold in[0,1]:continue
             hparams.labelpath = os.path.join(hparams.labeldir, foldlabel)
