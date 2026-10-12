@@ -17,8 +17,12 @@ class DownstreamGeneral_CompactOnly(DownstreamGeneral):
         self.hp = hparams
         self.a_min = 0
         self.a_max = hparams.a_max
-        self.dataset = CustomEmoDataset(self.hp.datadir, self.hp.labelpath, maxseqlen=self.hp.maxseqlen)
-        self.model = PretrainedRNNHead(n_classes=self.dataset.nemos, backend=self.hp.model_type)
+        self.dataset = CustomEmoDataset(
+            self.hp.datadir, self.hp.labelpath, maxseqlen=self.hp.maxseqlen
+        )
+        self.model = PretrainedRNNHead(
+            n_classes=self.dataset.nemos, backend=self.hp.model_type
+        )
         self.load_tapt_weights(self.hp.pretrained_path)
         counter = self.dataset.train_dataset.emos
         weights = torch.tensor([counter[c] for c in self.dataset.emoset]).float()
@@ -40,7 +44,7 @@ class DownstreamGeneral_CompactOnly(DownstreamGeneral):
         raise RuntimeError("Cannot find nn.Linear inside linear_head")
 
     def compact_loss(self, embeddings, labels):
-        """仅使用Compact Loss：让同类样本聚集"""
+        """Compact Loss only: pull samples of the same class together."""
         embeddings = F.normalize(embeddings, p=2, dim=1)
         prototypes = F.normalize(self.get_classifier_weight(), p=2, dim=1)
         similarity = torch.matmul(embeddings, prototypes.T)
@@ -60,12 +64,14 @@ class DownstreamGeneral_CompactOnly(DownstreamGeneral):
         total_steps = self.trainer.max_epochs * len(self.train_dataloader())
         progress = current_step / total_steps
 
-        # 渐进式增加Compact Loss的权重
+        # Gradually increase the weight of Compact Loss
         if progress < 2 / 3:
-            self.a = self.a_min + 0.5 * (self.a_max - self.a_min) * (1 - math.cos(math.pi * progress))
+            self.a = self.a_min + 0.5 * (self.a_max - self.a_min) * (
+                1 - math.cos(math.pi * progress)
+            )
             loss = ce_loss + self.a * compact_loss
         else:
-            # 后期以Compact Loss为主，保持CE Loss作为正则
+            # In the later stage, Compact Loss dominates while CE Loss acts as regularization
             loss = compact_loss + 1e-2 * ce_loss
 
         self.log('ce_loss', ce_loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -90,7 +96,12 @@ class DownstreamGeneral_CompactOnly(DownstreamGeneral):
 
     def on_validation_epoch_end(self):
         self.log('valid_UAR', self.valid_met.uar, on_epoch=True, prog_bar=True)
-        self.log('valid_precision', self.valid_met.precision.mean(), on_epoch=True, prog_bar=True)
+        self.log(
+            'valid_precision',
+            self.valid_met.precision.mean(),
+            on_epoch=True,
+            prog_bar=True,
+        )
         self.valid_met.clear()
 
 
@@ -98,13 +109,15 @@ def main_compact_only():
     if not os.path.exists(hparams.saving_path):
         os.makedirs(hparams.saving_path)
 
-    outputstr = f"Compact Only: a_max={hparams.a_max:.2f}, epoch={hparams.max_epochs:.0f}\n"
+    outputstr = (
+        f"Compact Only: a_max={hparams.a_max:.2f}, epoch={hparams.max_epochs:.0f}\n"
+    )
     with open(hparams.outputfile, 'a') as f:
         f.write(outputstr)
 
     for exp in range(hparams.num_exps):
         for ifold, foldlabel in enumerate(sorted(os.listdir(hparams.labeldir))):
-            if ifold in [0,1,2]:
+            if ifold in [0, 1, 2]:
                 continue
             hparams.labelpath = os.path.join(hparams.labeldir, foldlabel)
             model = DownstreamGeneral_CompactOnly(hparams, exp=exp)
@@ -115,12 +128,17 @@ def main_compact_only():
                 verbose=True,
                 save_weights_only=True,
                 monitor='valid_UAR',
-                mode='max'
+                mode='max',
             )
-            checkpoint_callback = DelayedModelCheckpoint(base_checkpoint, start_epoch=hparams.start_epoch)
+            checkpoint_callback = DelayedModelCheckpoint(
+                base_checkpoint, start_epoch=hparams.start_epoch
+            )
 
-            tb_logger = TensorBoardLogger(save_dir=hparams.log_dir, name="sess" + f"{ifold + 1}",
-                                          version=f"exp={exp}_epoch_{hparams.max_epochs}")
+            tb_logger = TensorBoardLogger(
+                save_dir=hparams.log_dir,
+                name="sess" + f"{ifold + 1}",
+                version=f"exp={exp}_epoch_{hparams.max_epochs}",
+            )
             trainer = Trainer(
                 precision=hparams.precision,
                 amp_backend='native',
@@ -130,7 +148,7 @@ def main_compact_only():
                 check_val_every_n_epoch=1,
                 gpus=1,
                 logger=tb_logger,
-                log_every_n_steps=10
+                log_every_n_steps=10,
             )
             trainer.fit(model)
             best_model_path = checkpoint_callback.best_model_path
@@ -140,5 +158,7 @@ def main_compact_only():
             with open(hparams.outputfile, 'a') as f:
                 f.write(outputstr)
             trainer.test(model)
+
+
 if __name__ == '__main__':
     main_compact_only()

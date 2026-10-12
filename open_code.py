@@ -1,6 +1,6 @@
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger  # 【新增】导入 TensorBoardLoggerssh -p 31646 root@connect.westb.seetacloud.com
+from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import RichProgressBar
 import os
 import json
@@ -41,6 +41,8 @@ class DelayedModelCheckpoint(Callback):
                 self._best_model_path = self.checkpoint_callback.best_model_path
         else:
             print(f"Epoch {trainer.current_epoch}: Skipping checkpoint save")
+
+
 def prepare_mask(length, shape, dtype, device):
     mask = torch.zeros(shape, dtype=dtype, device=device)
     mask[(torch.arange(mask.shape[0], device=device), length - 1)] = 1
@@ -60,7 +62,7 @@ class Wav2vec2Wrapper(nn.Module):
         self.wav2vec2.encoder.config.gradient_checkpointing = False
         self.pretrain = pretrain
 
-        # 下游任务使用 SpecAugment 配置
+        # SpecAugment configuration for downstream tasks
         self.mask_time_length = 15
         self.mask_time_prob = 0.08
         self.observe_time_prob = 0.0
@@ -68,29 +70,29 @@ class Wav2vec2Wrapper(nn.Module):
         self.mask_feature_prob = 0.05
 
     def trainable_params(self):
-        """返回可训练参数 - 下游任务只训练 encoder"""
+        """Return trainable parameters - for downstream tasks only the encoder is trained."""
         for param in self.wav2vec2.parameters():
             param.requires_grad = True
         return list(self.wav2vec2.encoder.parameters())
 
     def forward(self, x, length=None):
         with torch.no_grad():
-            # 特征提取
+            # Feature extraction
             x = self.wav2vec2.feature_extractor(x)
             x = x.transpose(1, 2)
             x, _ = self.wav2vec2.feature_projection(x)
 
-            # 处理变长序列
+            # Handle variable-length sequences
             mask = None
             if length is not None:
                 length = self.get_feat_extract_output_lengths(length)
                 mask = prepare_mask(length, x.shape[:2], x.dtype, x.device)
 
-            # SpecAugment（只在训练时）
+            # SpecAugment (only during training)
             if self.training:
                 batch_size, sequence_length, hidden_size = x.size()
 
-                # 时间维度掩码
+                # Time-dimension masking
                 if self.mask_time_prob > 0:
                     mask_time_indices = _compute_mask_indices(
                         (batch_size, sequence_length),
@@ -104,7 +106,7 @@ class Wav2vec2Wrapper(nn.Module):
                                            device=masked_indicies.device) > self.observe_time_prob
                     x[masked_indicies & flip_mask] = self.wav2vec2.masked_spec_embed.to(x.dtype)
 
-                # 特征维度掩码
+                # Feature-dimension masking
                 if self.mask_feature_prob > 0:
                     mask_feature_indices = _compute_mask_indices(
                         (batch_size, hidden_size),
@@ -116,7 +118,7 @@ class Wav2vec2Wrapper(nn.Module):
                         mask_feature_indices = torch.from_numpy(mask_feature_indices).to(x.device)
                     x[mask_feature_indices[:, None].expand(-1, sequence_length, -1)] = 0
 
-        # Transformer 编码
+        # Transformer encoding
         x = self.wav2vec2.encoder(x, attention_mask=mask)[0]
         reps = F.relu(x)
         return reps
@@ -131,7 +133,7 @@ class Wav2vec2Wrapper(nn.Module):
 
 
 class ConfusionMetrics:
-    """混淆矩阵评估指标"""
+    """Confusion-matrix evaluation metrics."""
 
     def __init__(self, n_classes):
         self.nc = n_classes
@@ -170,29 +172,30 @@ class ConfusionMetrics:
         s = self.m.sum(0)
         s[s == 0] = np.inf
         return np.diag(self.m) / s
-    # 【新增】获取每个类别的精度（按类别分开）
+
+    # [New] Get per-class precision (split by class)
     def get_per_class_precision(self):
-        """返回每个类别的精度字典"""
-        s = self.m.sum(0)  # 每列求和（预测为该类的总数）
+        """Return a dictionary of per-class precision."""
+        s = self.m.sum(0)  # Sum each column (total predicted as that class)
         per_class_precision = np.diag(self.m) / s
-        per_class_precision[s == 0] = 0  # 避免除以0，将分母为0的类别精度设为0
+        per_class_precision[s == 0] = 0  # Avoid division by zero; set precision to 0 when denominator is 0
         return per_class_precision
 
-    # 【新增】获取每个类别的召回率（按类别分开）
+    # [New] Get per-class recall (split by class)
     def get_per_class_recall(self):
-        """返回每个类别的召回率字典"""
-        s = self.m.sum(1)  # 每行求和（实际为该类的总数）
+        """Return a dictionary of per-class recall."""
+        s = self.m.sum(1)  # Sum each row (total actual for that class)
         per_class_recall = np.diag(self.m) / s
-        per_class_recall[s == 0] = 0  # 避免除以0
+        per_class_recall[s == 0] = 0  # Avoid division by zero
         return per_class_recall
 
-    # 【新增】获取每个类别的F1（按类别分开）
+    # [New] Get per-class F1 (split by class)
     def get_per_class_f1(self):
-        """返回每个类别的F1分数"""
+        """Return per-class F1 scores."""
         p = self.get_per_class_precision()
         r = self.get_per_class_recall()
         d = p + r
-        d[d == 0] = 1  # 避免除以0
+        d[d == 0] = 1  # Avoid division by zero
         return 2 * p * r / d
 
 
@@ -222,7 +225,6 @@ class _CustomEmoDataset(data.Dataset):
         _label = self.label[self.datasetbase[i]]
         label = self.labeldict[_label]
         return wav.astype(np.float32), label
-
 
 
 class CustomEmoDataset:
@@ -268,7 +270,7 @@ class PretrainedRNNHead(pl.LightningModule):
         self.cosine_scale = 16.0
         feature_dim = 768
         self.fc = nn.Linear(768, n_classes, bias=False)
-        # 余弦分类器（无偏置）
+        # Cosine classifier (no bias)
         self.linear_head = nn.Sequential(
             nn.ReLU(),
             self.fc
@@ -288,28 +290,30 @@ class PretrainedRNNHead(pl.LightningModule):
 
         embedding = (reps * masks.T.unsqueeze(-1)).sum(0) / last_feat_pos.unsqueeze(1)
 
-        # 余弦分类器
+        # Cosine classifier
         embedding_norm = F.normalize(embedding, p=2, dim=1)
-        weight_norm = F.normalize(self.fc.weight, p=2, dim=1)  # 直接访问 self.fc
+        weight_norm = F.normalize(self.fc.weight, p=2, dim=1)  # Directly access self.fc
         logits = self.cosine_scale * torch.matmul(embedding_norm, weight_norm.T)
 
         return logits, embedding
+
+
 class DownstreamGeneral(LightningModule):
-    def __init__(self, hparams,exp):
+    def __init__(self, hparams, exp):
         super().__init__()
         self.hp = hparams
         self.dataset = CustomEmoDataset(self.hp.datadir, self.hp.labelpath, maxseqlen=self.hp.maxseqlen)
         self.model = PretrainedRNNHead(n_classes=self.dataset.nemos, backend=self.hp.model_type)
         if self.hp.pretrained_path is not None:
             self.load_tapt_weights(self.hp.pretrained_path)
-        # 类别权重（处理不平衡）
+        # Class weights (to handle imbalance)
         counter = self.dataset.train_dataset.emos
         weights = torch.tensor([counter[c] for c in self.dataset.emoset]).float()
         weights = weights.sum() / weights
         weights = weights / weights.sum()
         print(f"Weigh losses by prior distribution of each class: {weights}.")
         self.criterion = nn.CrossEntropyLoss(weight=weights)
-        # 评估指标
+        # Evaluation metrics
         if hasattr(self.dataset, 'val_dataset'):
             self.valid_met = ConfusionMetrics(self.dataset.nemos)
         if hasattr(self.dataset, 'test_dataset'):
@@ -332,11 +336,12 @@ class DownstreamGeneral(LightningModule):
 
         missing, unexpected = self.model.wav2vec2.wav2vec2.load_state_dict(new_state_dict, strict=True)
 
-
     def forward(self, x, length):
         return self.model(x, length)
+
     def configure_optimizers(self):
         return optim.Adam(self.model.trainable_params(), lr=self.hp.lr)
+
     def train_dataloader(self):
         return DataLoader(
             dataset=self.dataset.train_dataset,
@@ -368,31 +373,31 @@ class DownstreamGeneral(LightningModule):
     def training_step(self, batch, batch_idx):
         feats, length, label = batch
         pout, embedding = self(feats, length)
-        loss= self.criterion(pout, label)
+        loss = self.criterion(pout, label)
         self.log('loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         feats, length, label = batch
         pout, embedding = self(feats, length)
-        loss= self.criterion(pout, label)
+        loss = self.criterion(pout, label)
         for l, p in zip(label, pout):
             self.valid_met.fit(int(l), int(p.argmax()))
 
     def on_validation_epoch_end(self):
-        self.log('valid_UAR', self.valid_met.uar,on_epoch=True,prog_bar=True)
-        self.log('valid_precision', self.valid_met.precision.mean(),on_epoch=True,prog_bar=True)
+        self.log('valid_UAR', self.valid_met.uar, on_epoch=True, prog_bar=True)
+        self.log('valid_precision', self.valid_met.precision.mean(), on_epoch=True, prog_bar=True)
         self.valid_met.clear()
 
     def test_step(self, batch, batch_idx):
         feats, label = batch
         length = torch.LongTensor([feats.size(1)]).to(label.device)
         pout, embedding = self(feats, length)
-        loss= self.criterion(pout, label)
+        loss = self.criterion(pout, label)
         self.test_met.fit(int(label), int(pout.argmax()))
 
     def on_test_epoch_end(self):
-        # 原有的整体指标
+        # Original overall metrics
         outputstr = f"UAR [%]={self.test_met.uar * 100:.4f}, Precision[%]={self.test_met.precision.mean() * 100:.4f}\n"
         self.log('test_Uar', self.test_met.uar)
         self.log('test_Precision', self.test_met.precision.mean())
@@ -403,16 +408,14 @@ class DownstreamGeneral(LightningModule):
         with open(self.hp.outputfile, 'a') as f:
             f.write(outputstr)
 
-
-
         self.test_met.clear()
+
 
 class Config:
     batch_size = 64
     start_epoch = 6
     max_epochs = 16
     num_exps = 3
-
 
     lr = 1e-4
     maxseqlen = 10
@@ -422,5 +425,5 @@ class Config:
     datadir = r"Dataset/IEMOCAP/Audio_16k"
     labeldir = r"Dataset/IEMOCAP/labels_sess/"
     saving_path = "best_model"
-    pretrained_path ="saving_file/last.ckpt"
+    pretrained_path = "saving_file/last.ckpt"
     model_type = 'wav2vec2'

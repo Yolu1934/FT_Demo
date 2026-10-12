@@ -1,4 +1,6 @@
 from open_code import *
+
+
 class Config(Config):
     topk = 2
     a_max = 0.3
@@ -19,8 +21,12 @@ class DownstreamGeneral_CompactTopK(DownstreamGeneral):
         self.a_max = hparams.a_max
         self.margin = hparams.margin
         self.topk = hparams.topk
-        self.dataset = CustomEmoDataset(self.hp.datadir, self.hp.labelpath, maxseqlen=self.hp.maxseqlen)
-        self.model = PretrainedRNNHead(n_classes=self.dataset.nemos, backend=self.hp.model_type)
+        self.dataset = CustomEmoDataset(
+            self.hp.datadir, self.hp.labelpath, maxseqlen=self.hp.maxseqlen
+        )
+        self.model = PretrainedRNNHead(
+            n_classes=self.dataset.nemos, backend=self.hp.model_type
+        )
         self.load_tapt_weights(self.hp.pretrained_path)
         counter = self.dataset.train_dataset.emos
         weights = torch.tensor([counter[c] for c in self.dataset.emoset]).float()
@@ -42,7 +48,7 @@ class DownstreamGeneral_CompactTopK(DownstreamGeneral):
         raise RuntimeError("Cannot find nn.Linear inside linear_head")
 
     def compact_topk_boundary_loss(self, embeddings, labels):
-        """Compact + Top-K Boundary Loss (无动态Margin)"""
+        """Compact + Top-K Boundary Loss (no dynamic margin)."""
         embeddings = F.normalize(embeddings, p=2, dim=1)
         prototypes = F.normalize(self.get_classifier_weight(), p=2, dim=1)
         similarity = torch.matmul(embeddings, prototypes.T)
@@ -51,17 +57,19 @@ class DownstreamGeneral_CompactTopK(DownstreamGeneral):
         index = torch.arange(B, device=embeddings.device)
         positive_similarity = similarity[index, labels]
 
-        # 找到Top-K最难负样本
+        # Find the Top-K hardest negative samples
         negative_similarity = similarity.clone()
         negative_similarity[index, labels] = -1e4
         K = min(self.topk, self.n_classes - 1)
         topk_similarity, _ = negative_similarity.topk(K, dim=1)
 
-        # Compact Loss: 让同类样本与原型更接近
+        # Compact Loss: pull samples of the same class closer to their prototype
         compact_loss = (1.0 - positive_similarity).mean()
 
-        # Boundary Loss: 使用固定Margin（无动态调整）
-        boundary_loss = F.relu(self.margin + topk_similarity - positive_similarity.unsqueeze(1)).mean()
+        # Boundary Loss: use a fixed margin (no dynamic adjustment)
+        boundary_loss = F.relu(
+            self.margin + topk_similarity - positive_similarity.unsqueeze(1)
+        ).mean()
 
         total_loss = 2 * compact_loss + boundary_loss
         return total_loss, compact_loss.detach(), boundary_loss.detach()
@@ -70,18 +78,22 @@ class DownstreamGeneral_CompactTopK(DownstreamGeneral):
         feats, length, label = batch
         pout, embedding = self(feats, length)
         ce_loss = self.criterion(pout, label)
-        proto_loss, compact_loss, boundary_loss = self.compact_topk_boundary_loss(embedding, label)
+        proto_loss, compact_loss, boundary_loss = self.compact_topk_boundary_loss(
+            embedding, label
+        )
 
         current_step = self.current_epoch * len(self.train_dataloader()) + batch_idx
         total_steps = self.trainer.max_epochs * len(self.train_dataloader())
         progress = current_step / total_steps
 
-        # 渐进式增加Proto Loss的权重
+        # Gradually increase the weight of Proto Loss
         if progress < 2 / 3:
-            self.a = self.a_min + 0.5 * (self.a_max - self.a_min) * (1 - math.cos(math.pi * progress))
+            self.a = self.a_min + 0.5 * (self.a_max - self.a_min) * (
+                1 - math.cos(math.pi * progress)
+            )
             loss = ce_loss + self.a * proto_loss
         else:
-            # 后期以Proto Loss为主（包含Compact + Boundary）
+            # In the later stage, Proto Loss dominates (includes Compact + Boundary)
             loss = proto_loss + 1e-4 * ce_loss
 
         self.log('ce_loss', ce_loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -95,8 +107,10 @@ class DownstreamGeneral_CompactTopK(DownstreamGeneral):
         feats, length, label = batch
         pout, embedding = self(feats, length)
         prediction = pout.argmax(dim=1)
-        proto_loss, compact_loss, boundary_loss = self.compact_topk_boundary_loss(embedding, label)
-        self.log('compact_VAl', compact_loss, on_step=True, on_epoch=True,)
+        proto_loss, compact_loss, boundary_loss = self.compact_topk_boundary_loss(
+            embedding, label
+        )
+        self.log('compact_VAl', compact_loss, on_step=True, on_epoch=True)
         self.log('boundary_VAL', boundary_loss, on_step=True, on_epoch=True)
         for l, p in zip(label, prediction):
             self.valid_met.fit(int(l), int(p))
@@ -109,7 +123,12 @@ class DownstreamGeneral_CompactTopK(DownstreamGeneral):
 
     def on_validation_epoch_end(self):
         self.log('valid_UAR', self.valid_met.uar, on_epoch=True, prog_bar=True)
-        self.log('valid_precision', self.valid_met.precision.mean(), on_epoch=True, prog_bar=True)
+        self.log(
+            'valid_precision',
+            self.valid_met.precision.mean(),
+            on_epoch=True,
+            prog_bar=True,
+        )
         self.valid_met.clear()
 
 
@@ -117,12 +136,14 @@ def main_compact_topk():
     if not os.path.exists(hparams.saving_path):
         os.makedirs(hparams.saving_path)
 
-    outputstr = f"Compact+TopK: a_max={hparams.a_max:.2f}, margin={hparams.margin:.2f}, topk={hparams.topk}, epoch={hparams.max_epochs:.0f}\n"
+    outputstr = (
+        f"Compact+TopK: a_max={hparams.a_max:.2f}, margin={hparams.margin:.2f}, "
+        f"topk={hparams.topk}, epoch={hparams.max_epochs:.0f}\n"
+    )
     with open(hparams.outputfile, 'a') as f:
         f.write(outputstr)
 
     for exp in range(hparams.num_exps):
-
         for ifold, foldlabel in enumerate(sorted(os.listdir(hparams.labeldir))):
             hparams.labelpath = os.path.join(hparams.labeldir, foldlabel)
             model = DownstreamGeneral_CompactTopK(hparams, exp=exp)
@@ -133,12 +154,17 @@ def main_compact_topk():
                 verbose=True,
                 save_weights_only=True,
                 monitor='valid_UAR',
-                mode='max'
+                mode='max',
             )
-            checkpoint_callback = DelayedModelCheckpoint(base_checkpoint, start_epoch=hparams.start_epoch)
+            checkpoint_callback = DelayedModelCheckpoint(
+                base_checkpoint, start_epoch=hparams.start_epoch
+            )
 
-            tb_logger = TensorBoardLogger(save_dir=hparams.log_dir, name="sess" + f"{ifold + 1}",
-                                          version=f"exp={exp}_epoch_{hparams.max_epochs}")
+            tb_logger = TensorBoardLogger(
+                save_dir=hparams.log_dir,
+                name="sess" + f"{ifold + 1}",
+                version=f"exp={exp}_epoch_{hparams.max_epochs}",
+            )
             trainer = Trainer(
                 precision=hparams.precision,
                 amp_backend='native',
@@ -148,15 +174,17 @@ def main_compact_topk():
                 check_val_every_n_epoch=1,
                 gpus=1,
                 logger=tb_logger,
-                log_every_n_steps=10
+                log_every_n_steps=10,
             )
             trainer.fit(model)
-            best_model_path =checkpoint_callback.best_model_path
+            best_model_path = checkpoint_callback.best_model_path
             checkpoint = torch.load(best_model_path, map_location='cpu')
             model.load_state_dict(checkpoint['state_dict'])
             outputstr = f"+++sess:{ifold + 1}+++\n"
             with open(hparams.outputfile, 'a') as f:
                 f.write(outputstr)
             trainer.test(model)
+
+
 if __name__ == '__main__':
     main_compact_topk()

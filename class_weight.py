@@ -1,6 +1,7 @@
 from open_code import *
 
-# ==================== 参数配置 ====================
+
+# ==================== Parameter configuration ====================
 class Config(Config):
     topk = 2
     a_max = 0.3
@@ -10,6 +11,8 @@ class Config(Config):
     outputfile = 'class_w.txt'
     log_dir = "class_w"
     confusion_gamma = 0.3
+
+
 hparams = Config()
 
 
@@ -19,6 +22,7 @@ def get_confusion_margin(self, labels):
     margins[torch.arange(B, device=labels.device), labels] = 0.0
     return margins
 
+
 class DownstreamGeneral(DownstreamGeneral):
     def __init__(self, hparams, exp):
         super().__init__(hparams, exp)
@@ -27,8 +31,12 @@ class DownstreamGeneral(DownstreamGeneral):
         self.a_max = hparams.a_max
         self.margin = hparams.margin
         self.topk = hparams.topk
-        self.dataset = CustomEmoDataset(self.hp.datadir, self.hp.labelpath, maxseqlen=self.hp.maxseqlen)
-        self.model = PretrainedRNNHead(n_classes=self.dataset.nemos, backend=self.hp.model_type)
+        self.dataset = CustomEmoDataset(
+            self.hp.datadir, self.hp.labelpath, maxseqlen=self.hp.maxseqlen
+        )
+        self.model = PretrainedRNNHead(
+            n_classes=self.dataset.nemos, backend=self.hp.model_type
+        )
         self.load_tapt_weights(self.hp.pretrained_path)
         counter = self.dataset.train_dataset.emos
         weights = torch.tensor([counter[c] for c in self.dataset.emoset]).float()
@@ -43,8 +51,12 @@ class DownstreamGeneral(DownstreamGeneral):
         self.feature_dim = 768
         self.n_classes = self.dataset.nemos
         self.confusion_gamma = hparams.confusion_gamma
-        self.register_buffer('confusion_matrix', torch.zeros(self.n_classes, self.n_classes))
-        self.register_buffer('current_confusion_ratio', torch.zeros(self.n_classes, self.n_classes))
+        self.register_buffer(
+            'confusion_matrix', torch.zeros(self.n_classes, self.n_classes)
+        )
+        self.register_buffer(
+            'current_confusion_ratio', torch.zeros(self.n_classes, self.n_classes)
+        )
 
     def get_classifier_weight(self):
         for module in reversed(self.model.linear_head):
@@ -67,25 +79,35 @@ class DownstreamGeneral(DownstreamGeneral):
         topk_confusion = torch.gather(confusion_ratio[labels], 1, topk_index)
         dynamic_margin = self.margin + self.confusion_gamma * topk_confusion
         compact_loss = (1.0 - positive_similarity).mean()
-        boundary_loss = F.relu(dynamic_margin + topk_similarity - positive_similarity.unsqueeze(1)).mean()
-        total_loss = 2*compact_loss + boundary_loss
-        return total_loss, compact_loss.detach(), boundary_loss.detach(), dynamic_margin.detach()
+        boundary_loss = F.relu(
+            dynamic_margin + topk_similarity - positive_similarity.unsqueeze(1)
+        ).mean()
+        total_loss = 2 * compact_loss + boundary_loss
+        return (
+            total_loss,
+            compact_loss.detach(),
+            boundary_loss.detach(),
+            dynamic_margin.detach(),
+        )
 
     def training_step(self, batch, batch_idx):
         feats, length, label = batch
         pout, embedding = self(feats, length)
         ce_loss = self.criterion(pout, label)
-        proto_loss, compact_loss, boundary_loss, dynamic_margin = self.topk_confusion_boundary_loss(embedding, label)
-
+        proto_loss, compact_loss, boundary_loss, dynamic_margin = (
+            self.topk_confusion_boundary_loss(embedding, label)
+        )
 
         current_step = self.current_epoch * len(self.train_dataloader()) + batch_idx
         total_steps = self.trainer.max_epochs * len(self.train_dataloader())
         progress = current_step / total_steps
-        if progress<2/3:
-            self.a = self.a_min + 0.5 * (self.a_max - self.a_min) * (1 - math.cos(math.pi * progress))
-            loss = ce_loss + self.a*proto_loss
+        if progress < 2 / 3:
+            self.a = self.a_min + 0.5 * (self.a_max - self.a_min) * (
+                1 - math.cos(math.pi * progress)
+            )
+            loss = ce_loss + self.a * proto_loss
         else:
-            loss=compact_loss+1e-2*ce_loss
+            loss = proto_loss + 1e-2 * ce_loss
         self.log('ce_loss', ce_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('total_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('compact_loss', compact_loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -116,15 +138,24 @@ class DownstreamGeneral(DownstreamGeneral):
         confusion_ratio.fill_diagonal_(0.0)
         self.current_confusion_ratio = confusion_ratio.detach()
         self.confusion_matrix.zero_()
-        self.log('valid_UAR', self.valid_met.uar,on_epoch=True,prog_bar=True)
-        self.log('valid_precision', self.valid_met.precision.mean(),on_epoch=True,prog_bar=True)
+        self.log('valid_UAR', self.valid_met.uar, on_epoch=True, prog_bar=True)
+        self.log(
+            'valid_precision',
+            self.valid_met.precision.mean(),
+            on_epoch=True,
+            prog_bar=True,
+        )
         self.valid_met.clear()
+
 
 def main():
     if not os.path.exists(hparams.saving_path):
         os.makedirs(hparams.saving_path)
 
-    outputstr = f"a_max={hparams.a_max:.2f}, margin={hparams.margin:.2f}, topk={hparams.topk}epoch={hparams.max_epochs:.0f}\n"
+    outputstr = (
+        f"a_max={hparams.a_max:.2f}, margin={hparams.margin:.2f}, "
+        f"topk={hparams.topk}epoch={hparams.max_epochs:.0f}\n"
+    )
     with open(hparams.outputfile, 'a') as f:
         f.write(outputstr)
     for exp in range(hparams.num_exps):
@@ -138,12 +169,17 @@ def main():
                 verbose=True,
                 save_weights_only=True,
                 monitor='valid_UAR',
-                mode='max'
+                mode='max',
             )
-            checkpoint_callback = DelayedModelCheckpoint(base_checkpoint, start_epoch=hparams.start_epoch)
+            checkpoint_callback = DelayedModelCheckpoint(
+                base_checkpoint, start_epoch=hparams.start_epoch
+            )
 
-            tb_logger = TensorBoardLogger(save_dir=hparams.log_dir, name="sess" + f"{ifold + 1}",
-                                          version=f"exp={exp}_epoch_{hparams.max_epochs}")
+            tb_logger = TensorBoardLogger(
+                save_dir=hparams.log_dir,
+                name="sess" + f"{ifold + 1}",
+                version=f"exp={exp}_epoch_{hparams.max_epochs}",
+            )
             trainer = Trainer(
                 precision=hparams.precision,
                 amp_backend='native',
@@ -153,16 +189,17 @@ def main():
                 check_val_every_n_epoch=1,
                 gpus=1,
                 logger=tb_logger,
-                log_every_n_steps=10
+                log_every_n_steps=10,
             )
             trainer.fit(model)
-            best_model_path =checkpoint_callback.best_model_path
+            best_model_path = checkpoint_callback.best_model_path
             checkpoint = torch.load(best_model_path, map_location='cpu')
             model.load_state_dict(checkpoint['state_dict'])
-            outputstr = f"+++sess:{ifold+1}+++\n"
+            outputstr = f"+++sess:{ifold + 1}+++\n"
             with open(hparams.outputfile, 'a') as f:
                 f.write(outputstr)
             trainer.test(model)
+
 
 if __name__ == '__main__':
     main()
